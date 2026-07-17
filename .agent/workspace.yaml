@@ -1,0 +1,8 @@
+version: 1
+commands:
+  verify:
+    run: go test ./... && go vet ./...
+    description: Run tests and static checks
+  build:
+    run: go build ./cmd/aw
+    description: Build the aw CLI

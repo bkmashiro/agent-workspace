@@ -1,0 +1,6 @@
+name: repo-tools
+version: 0.1.0
+commands:
+  summary:
+    run: "$AW_PACKAGE_DIR/scripts/summary.sh"
+    description: Print a compact repository summary
