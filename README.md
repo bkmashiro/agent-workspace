@@ -8,7 +8,7 @@ A workspace-local command and package runtime for coding agents.
 
 ## Status
 
-`v0.3.0` is a working local-first MVP:
+`v0.4.0` is a working local-first MVP:
 
 - finds a workspace from nested directories;
 - detects Git, GitHub Actions, pnpm/npm/yarn, Python, Go, Cargo, Taskfile, just, Cloudflare, Vercel, and Netlify markers;
@@ -24,7 +24,7 @@ A workspace-local command and package runtime for coding agents.
 - persists command-pattern triggers in workspace or package manifests;
 - routes trigger results through `wake` or a session-isolated deferred inbox.
 
-Hosted registries, webhooks, automatic harness hooks, and remote notification adapters are intentionally not in v0.3.
+Hosted registries, webhooks, automatic shell interception, and remote notification adapters are intentionally not in the core CLI.
 
 ## Install
 
@@ -91,7 +91,7 @@ triggers:
 
 `snapshot: git` hashes the starting Git state, including tracked diffs and untracked files. If the state changes before the command exits, `aw` reports the result as stale and exits `4` rather than treating an old green result as current verification.
 
-It is a validity stamp, not an isolated worktree: v0.3 does not prevent concurrent writes while the command runs.
+It is a validity stamp, not an isolated worktree: v0.4 does not prevent concurrent writes while the command runs.
 
 ## Packages
 
@@ -185,16 +185,28 @@ aw trigger fire --session "$SESSION_KEY" -- git push origin main
 - `wake`: stream the command result and propagate its exit code. A harness can use its normal completion notification to resume the agent.
 - `defer`: store the bounded result in the session inbox and return `0`, even when the watched command failed. This avoids an immediate LLM call.
 
-For a long-running deferred watcher, launch `aw trigger fire` with the host's tracked background primitive and disable completion notification. Read it on the next existing turn:
+For a long-running deferred watcher, launch `aw trigger fire` with the host's tracked background primitive and disable completion notification. A simple consumer can drain on the next existing turn:
 
 ```bash
 aw inbox list --session "$SESSION_KEY" --json
 aw inbox drain --session "$SESSION_KEY" --json
 ```
 
-`drain` returns and consumes the selected session's pending events. Runtime state lives outside the repository under `$AW_STATE_HOME`, `$XDG_STATE_HOME/aw`, or `~/.local/state/aw`; the workspace only stores trigger definitions. `AW_SESSION_ID` or `HERMES_SESSION_ID` can provide the default key, otherwise pass `--session` explicitly.
+Adapters that inject results into an LLM turn should use the loss-safe two-phase protocol across every workspace touched by that session:
 
-This release provides the deterministic CLI substrate. Automatic `pre_llm_call` injection still requires a small harness adapter; `aw` does not claim that a queued event is injected by itself.
+```bash
+# pre_llm_call: atomically move pending events to a retryable lease.
+aw inbox claim --all --session "$SESSION_KEY" --json
+
+# post_llm_call, only after a successful turn: consume those leases.
+aw inbox ack --all --session "$SESSION_KEY" --json
+```
+
+A failed API call leaves the lease intact, so the next `claim` returns the same events. Events arriving during the current turn remain pending and are not removed by `ack`. `drain` is the convenience `claim + ack` operation for consumers that do not need retry semantics.
+
+Runtime state lives outside the repository under `$AW_STATE_HOME`, `$XDG_STATE_HOME/aw`, or `~/.local/state/aw`; the workspace only stores trigger definitions. `AW_SESSION_ID` or `HERMES_SESSION_ID` can provide the default key, otherwise pass `--session` explicitly.
+
+The CLI provides the deterministic substrate. Automatic hook invocation and context injection belong in small, explicitly enabled harness adapters.
 
 ## Background use
 

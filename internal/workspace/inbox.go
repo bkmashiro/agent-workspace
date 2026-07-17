@@ -22,6 +22,7 @@ type InboxEvent struct {
 	Source      string    `json:"source,omitempty"`
 	Trigger     string    `json:"trigger,omitempty"`
 	Command     string    `json:"command,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
 	ExitCode    int       `json:"exit_code"`
 	Stdout      string    `json:"stdout,omitempty"`
@@ -42,13 +43,18 @@ func EnqueueEvent(root, session string, event InboxEvent) (InboxEvent, error) {
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}
+	canonicalRoot, err := canonicalWorkspaceRoot(root)
+	if err != nil {
+		return InboxEvent{}, err
+	}
+	event.Workspace = canonicalRoot
 	event.Stdout = boundInboxOutput(event.Stdout)
 	event.Stderr = boundInboxOutput(event.Stderr)
 	data, err := json.Marshal(event)
 	if err != nil {
 		return InboxEvent{}, err
 	}
-	directory, err := inboxDirectory(root, session)
+	directory, err := inboxDirectory(root, session, "pending")
 	if err != nil {
 		return InboxEvent{}, err
 	}
@@ -68,13 +74,131 @@ func EnqueueEvent(root, session string, event InboxEvent) (InboxEvent, error) {
 }
 
 func ListInbox(root, session string) ([]InboxEvent, error) {
-	if strings.TrimSpace(session) == "" {
-		return nil, errors.New("inbox session is required")
-	}
-	directory, err := inboxDirectory(root, session)
+	directory, err := inboxDirectory(root, session, "pending")
 	if err != nil {
 		return nil, err
 	}
+	return readInboxDirectory(directory)
+}
+
+func ListAllInbox(session string) ([]InboxEvent, error) {
+	directories, err := allInboxDirectories(session, "pending")
+	if err != nil {
+		return nil, err
+	}
+	return readInboxDirectories(directories)
+}
+
+func ClaimInbox(root, session string) ([]InboxEvent, error) {
+	pending, err := inboxDirectory(root, session, "pending")
+	if err != nil {
+		return nil, err
+	}
+	return claimInboxDirectory(pending)
+}
+
+func ClaimAllInbox(session string) ([]InboxEvent, error) {
+	pendingDirectories, err := allInboxDirectories(session, "pending")
+	if err != nil {
+		return nil, err
+	}
+	for _, pending := range pendingDirectories {
+		if _, err := claimInboxDirectory(pending); err != nil {
+			return nil, err
+		}
+	}
+	leasedDirectories, err := allInboxDirectories(session, "leased")
+	if err != nil {
+		return nil, err
+	}
+	return readInboxDirectories(leasedDirectories)
+}
+
+func AckInbox(root, session string) (int, error) {
+	leased, err := inboxDirectory(root, session, "leased")
+	if err != nil {
+		return 0, err
+	}
+	return removeInboxDirectoryEvents(leased)
+}
+
+func AckAllInbox(session string) (int, error) {
+	directories, err := allInboxDirectories(session, "leased")
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, directory := range directories {
+		count, err := removeInboxDirectoryEvents(directory)
+		if err != nil {
+			return total, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
+func DrainInbox(root, session string) ([]InboxEvent, error) {
+	events, err := ClaimInbox(root, session)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := AckInbox(root, session); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func DrainAllInbox(session string) ([]InboxEvent, error) {
+	events, err := ClaimAllInbox(session)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := AckAllInbox(session); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func claimInboxDirectory(pending string) ([]InboxEvent, error) {
+	leased := filepath.Join(filepath.Dir(pending), "leased")
+	entries, err := os.ReadDir(pending)
+	if errors.Is(err, os.ErrNotExist) {
+		return readInboxDirectory(leased)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(leased, 0o700); err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		source := filepath.Join(pending, entry.Name())
+		destination := filepath.Join(leased, entry.Name())
+		if err := os.Rename(source, destination); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	return readInboxDirectory(leased)
+}
+
+func readInboxDirectories(directories []string) ([]InboxEvent, error) {
+	var events []InboxEvent
+	for _, directory := range directories {
+		items, err := readInboxDirectory(directory)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, items...)
+	}
+	sortInboxEvents(events)
+	return events, nil
+}
+
+func readInboxDirectory(directory string) ([]InboxEvent, error) {
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return []InboxEvent{}, nil
@@ -97,37 +221,85 @@ func ListInbox(root, session string) ([]InboxEvent, error) {
 		}
 		events = append(events, event)
 	}
+	sortInboxEvents(events)
+	return events, nil
+}
+
+func removeInboxDirectoryEvents(directory string) (int, error) {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(directory, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+func sortInboxEvents(events []InboxEvent) {
 	sort.Slice(events, func(i, j int) bool {
 		if events[i].CreatedAt.Equal(events[j].CreatedAt) {
 			return events[i].ID < events[j].ID
 		}
 		return events[i].CreatedAt.Before(events[j].CreatedAt)
 	})
-	return events, nil
 }
 
-func DrainInbox(root, session string) ([]InboxEvent, error) {
-	events, err := ListInbox(root, session)
-	if err != nil {
-		return nil, err
+func inboxDirectory(root, session, state string) (string, error) {
+	if strings.TrimSpace(session) == "" {
+		return "", errors.New("inbox session is required")
 	}
-	directory, err := inboxDirectory(root, session)
-	if err != nil {
-		return nil, err
-	}
-	for _, event := range events {
-		if err := os.Remove(filepath.Join(directory, event.ID+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-	}
-	return events, nil
-}
-
-func inboxDirectory(root, session string) (string, error) {
 	stateHome, err := awStateHome()
 	if err != nil {
 		return "", err
 	}
+	canonicalRoot, err := canonicalWorkspaceRoot(root)
+	if err != nil {
+		return "", err
+	}
+	workspaceHash := sha256.Sum256([]byte(canonicalRoot))
+	sessionDigest := sha256.Sum256([]byte(session))
+	return filepath.Join(stateHome, hex.EncodeToString(workspaceHash[:16]), hex.EncodeToString(sessionDigest[:16]), state), nil
+}
+
+func allInboxDirectories(session, state string) ([]string, error) {
+	if strings.TrimSpace(session) == "" {
+		return nil, errors.New("inbox session is required")
+	}
+	stateHome, err := awStateHome()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(stateHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	sessionDigest := sha256.Sum256([]byte(session))
+	sessionName := hex.EncodeToString(sessionDigest[:16])
+	var directories []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			directories = append(directories, filepath.Join(stateHome, entry.Name(), sessionName, state))
+		}
+	}
+	sort.Strings(directories)
+	return directories, nil
+}
+
+func canonicalWorkspaceRoot(root string) (string, error) {
 	absoluteRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
@@ -135,9 +307,7 @@ func inboxDirectory(root, session string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(absoluteRoot); err == nil {
 		absoluteRoot = resolved
 	}
-	workspaceHash := sha256.Sum256([]byte(absoluteRoot))
-	sessionHash := sha256.Sum256([]byte(session))
-	return filepath.Join(stateHome, hex.EncodeToString(workspaceHash[:16]), hex.EncodeToString(sessionHash[:16]), "pending"), nil
+	return absoluteRoot, nil
 }
 
 func awStateHome() (string, error) {

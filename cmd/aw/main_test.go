@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,6 +85,36 @@ func TestCLIInspectJSONFromNestedDirectory(t *testing.T) {
 	}
 	if result.Root != root || result.Name != "fixture" || !result.Git {
 		t.Fatalf("inspect=%#v", result)
+	}
+}
+
+func TestCLIInboxClaimAndAckAllWorkspaces(t *testing.T) {
+	t.Setenv("AW_STATE_HOME", t.TempDir())
+	first := newWorkspace(t)
+	second := newWorkspace(t)
+	for index, root := range []string{first, second} {
+		name := fmt.Sprintf("check-%d", index)
+		if code, _, stderr := runForTest(t, root, "add", name, "--", "printf result"); code != 0 {
+			t.Fatalf("add code=%d stderr=%s", code, stderr)
+		}
+		if code, _, stderr := runForTest(t, root, "trigger", "add", name, "--match", "push*", "--run", name, "--delivery", "defer"); code != 0 {
+			t.Fatalf("trigger add code=%d stderr=%s", code, stderr)
+		}
+		if code, _, stderr := runForTest(t, root, "trigger", "fire", "--session", "global-session", "--", "push"); code != 0 {
+			t.Fatalf("fire code=%d stderr=%s", code, stderr)
+		}
+	}
+	code, output, stderr := runForTest(t, first, "inbox", "claim", "--all", "--session", "global-session", "--json")
+	if code != 0 || strings.Count(output, `"workspace":`) != 2 {
+		t.Fatalf("claim code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, output, stderr = runForTest(t, first, "inbox", "claim", "--all", "--session", "global-session", "--json")
+	if code != 0 || strings.Count(output, `"workspace":`) != 2 {
+		t.Fatalf("retry claim code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, output, stderr = runForTest(t, first, "inbox", "ack", "--all", "--session", "global-session", "--json")
+	if code != 0 || !strings.Contains(output, `"acked": 2`) {
+		t.Fatalf("ack code=%d stdout=%s stderr=%s", code, output, stderr)
 	}
 }
 

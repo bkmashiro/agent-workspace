@@ -7,6 +7,49 @@ import (
 	"testing"
 )
 
+func TestClaimAllInboxRetriesLeasesAndAckDoesNotDeleteNewPendingEvents(t *testing.T) {
+	t.Setenv("AW_STATE_HOME", t.TempDir())
+	firstRoot := t.TempDir()
+	secondRoot := t.TempDir()
+	if _, err := EnqueueEvent(firstRoot, "shared-session", InboxEvent{Source: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnqueueEvent(secondRoot, "shared-session", InboxEvent{Source: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := ClaimAllInbox("shared-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 2 || claimed[0].Workspace == "" || claimed[1].Workspace == "" {
+		t.Fatalf("claimed = %#v", claimed)
+	}
+	retried, err := ClaimAllInbox("shared-session")
+	if err != nil || len(retried) != 2 {
+		t.Fatalf("retried = %#v, err=%v", retried, err)
+	}
+	if _, err := EnqueueEvent(firstRoot, "shared-session", InboxEvent{Source: "arrived-during-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	acked, err := AckAllInbox("shared-session")
+	if err != nil || acked != 2 {
+		t.Fatalf("acked=%d err=%v", acked, err)
+	}
+	pending, err := ListAllInbox("shared-session")
+	if err != nil || len(pending) != 1 || pending[0].Source != "arrived-during-turn" {
+		t.Fatalf("pending = %#v, err=%v", pending, err)
+	}
+	claimed, err = ClaimAllInbox("shared-session")
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed second turn = %#v, err=%v", claimed, err)
+	}
+	acked, err = AckAllInbox("shared-session")
+	if err != nil || acked != 1 {
+		t.Fatalf("second ack=%d err=%v", acked, err)
+	}
+}
+
 func TestInboxIsSessionIsolatedAndDrainConsumesOnlySelectedSession(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("AW_STATE_HOME", stateHome)

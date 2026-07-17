@@ -11,7 +11,7 @@ import (
 	"github.com/bkmashiro/agent-workspace/internal/workspace"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 func main() {
 	cwd, err := os.Getwd()
@@ -374,17 +374,20 @@ func parseFireCommand(args []string) (string, string, bool) {
 }
 
 func inboxCommand(root string, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "list" && args[0] != "drain") {
-		fmt.Fprintln(stderr, "usage: aw inbox <list|drain> [--session <key>] [--json]")
+	if len(args) == 0 || (args[0] != "list" && args[0] != "drain" && args[0] != "claim" && args[0] != "ack") {
+		fmt.Fprintln(stderr, "usage: aw inbox <list|claim|ack|drain> [--all] [--session <key>] [--json]")
 		return 2
 	}
 	action := args[0]
 	session := defaultSession()
 	jsonOutput := false
+	allWorkspaces := false
 	for index := 1; index < len(args); index++ {
 		switch args[index] {
 		case "--json":
 			jsonOutput = true
+		case "--all":
+			allWorkspaces = true
 		case "--session":
 			if index+1 >= len(args) {
 				fmt.Fprintln(stderr, "aw: --session requires a value")
@@ -401,12 +404,46 @@ func inboxCommand(root string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "aw: inbox session is required; pass --session or set AW_SESSION_ID")
 		return 2
 	}
+	if action == "ack" {
+		var acknowledged int
+		var err error
+		if allWorkspaces {
+			acknowledged, err = workspace.AckAllInbox(session)
+		} else {
+			acknowledged, err = workspace.AckInbox(root, session)
+		}
+		if err != nil {
+			return printError(stderr, err)
+		}
+		result := map[string]int{"acked": acknowledged}
+		if jsonOutput {
+			return writeJSON(stdout, stderr, result)
+		}
+		fmt.Fprintf(stdout, "Acknowledged %d inbox event(s)\n", acknowledged)
+		return 0
+	}
+
 	var events []workspace.InboxEvent
 	var err error
-	if action == "drain" {
-		events, err = workspace.DrainInbox(root, session)
-	} else {
-		events, err = workspace.ListInbox(root, session)
+	switch action {
+	case "claim":
+		if allWorkspaces {
+			events, err = workspace.ClaimAllInbox(session)
+		} else {
+			events, err = workspace.ClaimInbox(root, session)
+		}
+	case "drain":
+		if allWorkspaces {
+			events, err = workspace.DrainAllInbox(session)
+		} else {
+			events, err = workspace.DrainInbox(root, session)
+		}
+	default:
+		if allWorkspaces {
+			events, err = workspace.ListAllInbox(session)
+		} else {
+			events, err = workspace.ListInbox(root, session)
+		}
 	}
 	if err != nil {
 		return printError(stderr, err)
@@ -470,6 +507,6 @@ Commands:
   run <name> [-- <args...>]                Run a command at the workspace root
   install <source> [--ref R] [--subdir P]   Install a local or Git package
   trigger <add|list|match|fire> ...          Manage and fire command triggers
-  inbox <list|drain> [options]               Read deferred trigger results
+  inbox <list|claim|ack|drain> [options]     Read deferred trigger results
   version                                    Print the version`)
 }
