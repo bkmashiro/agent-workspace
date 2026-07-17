@@ -8,7 +8,7 @@ A workspace-local command and package runtime for coding agents.
 
 ## Status
 
-`v0.4.0` is a working local-first MVP:
+`v0.4.1` is a working local-first MVP:
 
 - finds a workspace from nested directories;
 - detects Git, GitHub Actions, pnpm/npm/yarn, Python, Go, Cargo, Taskfile, just, Cloudflare, Vercel, and Netlify markers;
@@ -177,13 +177,15 @@ aw trigger match --json -- git push origin main
 `aw` does not intercept arbitrary shell processes. A harness hook, wrapper, or agent fires the trigger only after the observed command succeeds:
 
 ```bash
-aw trigger fire --session "$SESSION_KEY" -- git push origin main
+aw trigger fire --session "$SESSION_KEY" --delivery defer -- git push origin main
 ```
 
 `fire` executes every matching trigger command. Delivery controls what happens afterward:
 
 - `wake`: stream the command result and propagate its exit code. A harness can use its normal completion notification to resume the agent.
 - `defer`: store the bounded result in the session inbox and return `0`, even when the watched command failed. This avoids an immediate LLM call.
+
+Pass `--delivery defer` from adapters that cannot surface synchronous `wake` output; the filter prevents wake triggers from running and being silently discarded. Omit it for manual use when both policies should fire.
 
 For a long-running deferred watcher, launch `aw trigger fire` with the host's tracked background primitive and disable completion notification. A simple consumer can drain on the next existing turn:
 

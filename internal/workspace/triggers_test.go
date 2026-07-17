@@ -8,6 +8,35 @@ import (
 	"testing"
 )
 
+func TestFireTriggersFiltersByDelivery(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AW_STATE_HOME", t.TempDir())
+	if err := AddCommand(root, "deferred", Command{Run: "printf deferred"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddCommand(root, "immediate", Command{Run: "printf immediate"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTrigger(root, "deferred", Trigger{Match: "deploy*", Run: "deferred", Delivery: "defer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTrigger(root, "immediate", Trigger{Match: "deploy*", Run: "immediate", Delivery: "wake"}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	result := FireTriggersForDelivery(context.Background(), root, "deploy now", "session-1", "defer", &stdout, &stderr)
+	if result.ExitCode != 0 || result.Matched != 1 || result.Deferred != 1 {
+		t.Fatalf("result = %#v, stderr=%s", result, stderr.String())
+	}
+	events, err := ListInbox(root, "session-1")
+	if err != nil || len(events) != 1 || events[0].Command != "deferred" {
+		t.Fatalf("events = %#v, err=%v", events, err)
+	}
+	if strings.Contains(stdout.String(), "immediate") {
+		t.Fatalf("wake trigger unexpectedly fired: %s", stdout.String())
+	}
+}
+
 func TestFireTriggersRejectsMissingDeferredSessionBeforeRunningCommand(t *testing.T) {
 	root := t.TempDir()
 	marker := filepath.Join(root, "should-not-run")

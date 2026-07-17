@@ -139,10 +139,28 @@ type TriggerFireResult struct {
 }
 
 func FireTriggers(ctx context.Context, root, observedCommand, session string, stdout, stderr io.Writer) TriggerFireResult {
+	return FireTriggersForDelivery(ctx, root, observedCommand, session, "", stdout, stderr)
+}
+
+func FireTriggersForDelivery(ctx context.Context, root, observedCommand, session, delivery string, stdout, stderr io.Writer) TriggerFireResult {
 	matched, err := MatchTriggers(root, observedCommand)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return TriggerFireResult{ExitCode: 2}
+	}
+	if delivery != "" {
+		delivery = strings.ToLower(strings.TrimSpace(delivery))
+		if delivery != "defer" && delivery != "wake" {
+			fmt.Fprintf(stderr, "invalid delivery %q\n", delivery)
+			return TriggerFireResult{ExitCode: 2}
+		}
+		filtered := matched[:0]
+		for _, trigger := range matched {
+			if trigger.Delivery == delivery {
+				filtered = append(filtered, trigger)
+			}
+		}
+		matched = filtered
 	}
 	fireResult := TriggerFireResult{Matched: len(matched)}
 	for _, trigger := range matched {

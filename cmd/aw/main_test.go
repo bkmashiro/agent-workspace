@@ -131,7 +131,7 @@ func TestCLITriggerFireAndInboxDrain(t *testing.T) {
 	if code != 0 || !strings.Contains(output, `"name": "after-push"`) {
 		t.Fatalf("trigger match code=%d stdout=%s stderr=%s", code, output, stderr)
 	}
-	code, _, stderr = runForTest(t, root, "trigger", "fire", "--session", "test-session", "--", "git", "push", "origin", "main")
+	code, _, stderr = runForTest(t, root, "trigger", "fire", "--session", "test-session", "--delivery", "defer", "--", "git", "push", "origin", "main")
 	if code != 0 {
 		t.Fatalf("trigger fire code=%d stderr=%s", code, stderr)
 	}

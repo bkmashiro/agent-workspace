@@ -11,7 +11,7 @@ import (
 	"github.com/bkmashiro/agent-workspace/internal/workspace"
 )
 
-const version = "0.4.0"
+const version = "0.4.1"
 
 func main() {
 	cwd, err := os.Getwd()
@@ -282,12 +282,12 @@ func triggerCommand(ctx context.Context, root string, args []string, stdout, std
 		}
 		return 0
 	case "fire":
-		command, session, ok := parseFireCommand(args[1:])
+		command, session, delivery, ok := parseFireCommand(args[1:])
 		if !ok {
-			fmt.Fprintln(stderr, "usage: aw trigger fire [--session <key>] -- <observed-command>")
+			fmt.Fprintln(stderr, "usage: aw trigger fire [--session <key>] [--delivery defer|wake] -- <observed-command>")
 			return 2
 		}
-		result := workspace.FireTriggers(ctx, root, command, session, stdout, stderr)
+		result := workspace.FireTriggersForDelivery(ctx, root, command, session, delivery, stdout, stderr)
 		return result.ExitCode
 	default:
 		fmt.Fprintf(stderr, "aw: unknown trigger command %q\n", args[0])
@@ -349,8 +349,9 @@ func parseObservedCommand(args []string) (bool, string, bool) {
 	return jsonOutput, strings.Join(args[separator+1:], " "), true
 }
 
-func parseFireCommand(args []string) (string, string, bool) {
+func parseFireCommand(args []string) (string, string, string, bool) {
 	session := defaultSession()
+	delivery := ""
 	separator := -1
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -359,18 +360,24 @@ func parseFireCommand(args []string) (string, string, bool) {
 			index = len(args)
 		case "--session":
 			if index+1 >= len(args) {
-				return "", "", false
+				return "", "", "", false
 			}
 			session = args[index+1]
 			index++
+		case "--delivery":
+			if index+1 >= len(args) {
+				return "", "", "", false
+			}
+			delivery = args[index+1]
+			index++
 		default:
-			return "", "", false
+			return "", "", "", false
 		}
 	}
 	if separator < 0 || separator+1 >= len(args) {
-		return "", "", false
+		return "", "", "", false
 	}
-	return strings.Join(args[separator+1:], " "), session, true
+	return strings.Join(args[separator+1:], " "), session, delivery, true
 }
 
 func inboxCommand(root string, args []string, stdout, stderr io.Writer) int {
