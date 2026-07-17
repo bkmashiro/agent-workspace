@@ -47,6 +47,10 @@ func runCLI(ctx context.Context, cwd string, args []string, stdout, stderr io.Wr
 		return 0
 	}
 
+	if args[0] == "inbox" && slicesContain(args[1:], "--all") {
+		return inboxCommand("", args[1:], stdout, stderr)
+	}
+
 	root, err := workspace.FindRoot(cwd)
 	if err != nil {
 		fmt.Fprintf(stderr, "aw: %v\n", err)
@@ -477,6 +481,15 @@ func defaultSession() string {
 		}
 	}
 	return ""
+}
+
+func slicesContain(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func onlyJSONFlag(args []string) (bool, bool) {

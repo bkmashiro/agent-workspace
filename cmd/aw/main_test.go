@@ -104,17 +104,22 @@ func TestCLIInboxClaimAndAckAllWorkspaces(t *testing.T) {
 			t.Fatalf("fire code=%d stderr=%s", code, stderr)
 		}
 	}
-	code, output, stderr := runForTest(t, first, "inbox", "claim", "--all", "--session", "global-session", "--json")
+	outsider := t.TempDir()
+	code, output, stderr := runForTest(t, outsider, "inbox", "claim", "--all", "--session", "global-session", "--json")
 	if code != 0 || strings.Count(output, `"workspace":`) != 2 {
 		t.Fatalf("claim code=%d stdout=%s stderr=%s", code, output, stderr)
 	}
-	code, output, stderr = runForTest(t, first, "inbox", "claim", "--all", "--session", "global-session", "--json")
+	code, output, stderr = runForTest(t, outsider, "inbox", "claim", "--all", "--session", "global-session", "--json")
 	if code != 0 || strings.Count(output, `"workspace":`) != 2 {
 		t.Fatalf("retry claim code=%d stdout=%s stderr=%s", code, output, stderr)
 	}
-	code, output, stderr = runForTest(t, first, "inbox", "ack", "--all", "--session", "global-session", "--json")
+	code, output, stderr = runForTest(t, outsider, "inbox", "ack", "--all", "--session", "global-session", "--json")
 	if code != 0 || !strings.Contains(output, `"acked": 2`) {
 		t.Fatalf("ack code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, output, stderr = runForTest(t, outsider, "inbox", "list", "--all", "--session", "global-session", "--json")
+	if code != 0 || strings.TrimSpace(output) != "[]" {
+		t.Fatalf("empty list code=%d stdout=%s stderr=%s", code, output, stderr)
 	}
 }
 

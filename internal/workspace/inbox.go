@@ -186,7 +186,7 @@ func claimInboxDirectory(pending string) ([]InboxEvent, error) {
 }
 
 func readInboxDirectories(directories []string) ([]InboxEvent, error) {
-	var events []InboxEvent
+	events := make([]InboxEvent, 0)
 	for _, directory := range directories {
 		items, err := readInboxDirectory(directory)
 		if err != nil {
