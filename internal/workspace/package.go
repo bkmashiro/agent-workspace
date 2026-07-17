@@ -97,6 +97,14 @@ func installPackage(root, packageDirectory, source, revision string) (InstalledP
 			return InstalledPackage{}, fmt.Errorf("package command %q is empty", name)
 		}
 	}
+	for name, trigger := range manifest.Triggers {
+		if err := validateName(name); err != nil {
+			return InstalledPackage{}, err
+		}
+		if _, err := normalizeTrigger(trigger); err != nil {
+			return InstalledPackage{}, fmt.Errorf("package trigger %q: %w", name, err)
+		}
+	}
 
 	digest, err := digestDirectory(packageDirectory)
 	if err != nil {

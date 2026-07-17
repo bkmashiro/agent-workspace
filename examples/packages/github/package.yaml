@@ -7,3 +7,9 @@ commands:
   pr-review:
     run: "$AW_PACKAGE_DIR/scripts/watch-pr.sh"
     description: Wait for a review or comment on the current pull request
+triggers:
+  after-push:
+    match: git push*
+    run: ci
+    delivery: defer
+    description: Watch GitHub Actions after a successful push

@@ -11,9 +11,19 @@ type Command struct {
 	Source      string `yaml:"-" json:"source,omitempty"`
 }
 
+type Trigger struct {
+	Name        string `yaml:"-" json:"name,omitempty"`
+	Match       string `yaml:"match" json:"match"`
+	Run         string `yaml:"run" json:"run"`
+	Delivery    string `yaml:"delivery,omitempty" json:"delivery,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Source      string `yaml:"-" json:"source,omitempty"`
+}
+
 type Manifest struct {
 	Version  int                `yaml:"version"`
 	Commands map[string]Command `yaml:"commands,omitempty"`
+	Triggers map[string]Trigger `yaml:"triggers,omitempty"`
 }
 
 type Inspection struct {
@@ -45,6 +55,7 @@ type PackageManifest struct {
 	Name     string             `yaml:"name"`
 	Version  string             `yaml:"version"`
 	Commands map[string]Command `yaml:"commands"`
+	Triggers map[string]Trigger `yaml:"triggers,omitempty"`
 }
 
 type Lockfile struct {

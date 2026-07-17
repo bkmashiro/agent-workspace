@@ -87,6 +87,37 @@ func TestCLIInspectJSONFromNestedDirectory(t *testing.T) {
 	}
 }
 
+func TestCLITriggerFireAndInboxDrain(t *testing.T) {
+	t.Setenv("AW_STATE_HOME", t.TempDir())
+	root := newWorkspace(t)
+	if code, _, stderr := runForTest(t, root, "add", "ci", "--", "printf failed >&2; exit 9"); code != 0 {
+		t.Fatalf("add code=%d stderr=%s", code, stderr)
+	}
+	if code, _, stderr := runForTest(t, root, "trigger", "add", "after-push", "--match", "git push*", "--run", "ci", "--delivery", "defer"); code != 0 {
+		t.Fatalf("trigger add code=%d stderr=%s", code, stderr)
+	}
+	code, output, stderr := runForTest(t, root, "trigger", "match", "--json", "--", "git", "push", "origin", "main")
+	if code != 0 || !strings.Contains(output, `"name": "after-push"`) {
+		t.Fatalf("trigger match code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, _, stderr = runForTest(t, root, "trigger", "fire", "--session", "test-session", "--", "git", "push", "origin", "main")
+	if code != 0 {
+		t.Fatalf("trigger fire code=%d stderr=%s", code, stderr)
+	}
+	code, output, stderr = runForTest(t, root, "inbox", "list", "--session", "test-session", "--json")
+	if code != 0 || !strings.Contains(output, `"exit_code": 9`) || !strings.Contains(output, `"trigger": "after-push"`) {
+		t.Fatalf("inbox list code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, output, stderr = runForTest(t, root, "inbox", "drain", "--session", "test-session", "--json")
+	if code != 0 || !strings.Contains(output, `"exit_code": 9`) {
+		t.Fatalf("inbox drain code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+	code, output, stderr = runForTest(t, root, "inbox", "list", "--session", "test-session", "--json")
+	if code != 0 || strings.TrimSpace(output) != "[]" {
+		t.Fatalf("inbox not empty: code=%d stdout=%s stderr=%s", code, output, stderr)
+	}
+}
+
 func TestCLIInstallGitPackage(t *testing.T) {
 	root := newWorkspace(t)
 	repository := t.TempDir()
@@ -151,6 +182,13 @@ func TestCLIRejectsMalformedAdd(t *testing.T) {
 	if code == 0 || !strings.Contains(stderr.String(), "usage") {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
+}
+
+func runForTest(t *testing.T, root string, args ...string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), root, args, &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
 }
 
 func runGitCommand(t *testing.T, dir string, args ...string) string {

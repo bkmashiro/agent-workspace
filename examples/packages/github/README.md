@@ -26,6 +26,20 @@ aw run github:pr-review -- --repo owner/repo --number 42
 
 Exit codes: `0` approved/new activity, `1` changes requested, `2` timeout/configuration error.
 
+## Included trigger
+
+Installing the package contributes this trigger:
+
+```yaml
+triggers:
+  after-push:
+    match: git push*
+    run: ci
+    delivery: defer
+```
+
+It is catalogued as `github:after-push` and resolves `run: ci` to `github:ci`. The package does not intercept shell commands; call `aw trigger fire --session <key> -- git push ...` from an agent or harness post-command hook after a successful push.
+
 ## Background execution
 
 The package commands remain foreground processes. Start them with the host harness's tracked background-process primitive. In Hermes:

@@ -10,6 +10,21 @@ import (
 	"testing"
 )
 
+func TestInstallPackageRejectsInvalidTrigger(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "bad-trigger")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "name: bad-trigger\nversion: 0.1.0\ncommands:\n  ping:\n    run: true\ntriggers:\n  broken:\n    match: git push*\n    run: ''\n    delivery: defer\n"
+	if err := os.WriteFile(filepath.Join(source, "package.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallPackage(root, source); err == nil {
+		t.Fatal("expected invalid trigger to reject package installation")
+	}
+}
+
 func TestInstallGitPackageFromPinnedRefAndSubdirectory(t *testing.T) {
 	root := t.TempDir()
 	repository := t.TempDir()

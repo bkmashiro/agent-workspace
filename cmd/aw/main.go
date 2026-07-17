@@ -11,7 +11,7 @@ import (
 	"github.com/bkmashiro/agent-workspace/internal/workspace"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	cwd, err := os.Getwd()
@@ -64,6 +64,10 @@ func runCLI(ctx context.Context, cwd string, args []string, stdout, stderr io.Wr
 		return runCommand(ctx, root, args[1:], stdout, stderr)
 	case "install":
 		return installCommand(root, args[1:], stdout, stderr)
+	case "trigger":
+		return triggerCommand(ctx, root, args[1:], stdout, stderr)
+	case "inbox":
+		return inboxCommand(root, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "aw: unknown command %q\n", args[0])
 		printUsage(stderr)
@@ -234,6 +238,203 @@ func installCommand(root string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func triggerCommand(ctx context.Context, root string, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: aw trigger <add|list|match|fire> ...")
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return triggerAddCommand(root, args[1:], stdout, stderr)
+	case "list":
+		jsonOutput, ok := onlyJSONFlag(args[1:])
+		if !ok {
+			fmt.Fprintln(stderr, "usage: aw trigger list [--json]")
+			return 2
+		}
+		catalog, err := workspace.TriggerCatalog(root)
+		if err != nil {
+			return printError(stderr, err)
+		}
+		triggers := workspace.SortedTriggers(catalog)
+		if jsonOutput {
+			return writeJSON(stdout, stderr, triggers)
+		}
+		for _, trigger := range triggers {
+			fmt.Fprintf(stdout, "%-24s %-6s %-24s %s\n", trigger.Name, trigger.Delivery, trigger.Run, trigger.Match)
+		}
+		return 0
+	case "match":
+		jsonOutput, command, ok := parseObservedCommand(args[1:])
+		if !ok {
+			fmt.Fprintln(stderr, "usage: aw trigger match [--json] -- <observed-command>")
+			return 2
+		}
+		matched, err := workspace.MatchTriggers(root, command)
+		if err != nil {
+			return printError(stderr, err)
+		}
+		if jsonOutput {
+			return writeJSON(stdout, stderr, matched)
+		}
+		for _, trigger := range matched {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\n", trigger.Name, trigger.Delivery, trigger.Run)
+		}
+		return 0
+	case "fire":
+		command, session, ok := parseFireCommand(args[1:])
+		if !ok {
+			fmt.Fprintln(stderr, "usage: aw trigger fire [--session <key>] -- <observed-command>")
+			return 2
+		}
+		result := workspace.FireTriggers(ctx, root, command, session, stdout, stderr)
+		return result.ExitCode
+	default:
+		fmt.Fprintf(stderr, "aw: unknown trigger command %q\n", args[0])
+		return 2
+	}
+}
+
+func triggerAddCommand(root string, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 5 {
+		fmt.Fprintln(stderr, "usage: aw trigger add <name> --match <glob> --run <command> [--delivery defer|wake] [--description <text>]")
+		return 2
+	}
+	name := args[0]
+	trigger := workspace.Trigger{Delivery: "defer"}
+	for index := 1; index < len(args); index++ {
+		if index+1 >= len(args) {
+			fmt.Fprintf(stderr, "aw: %s requires a value\n", args[index])
+			return 2
+		}
+		value := args[index+1]
+		switch args[index] {
+		case "--match":
+			trigger.Match = value
+		case "--run":
+			trigger.Run = value
+		case "--delivery":
+			trigger.Delivery = value
+		case "--description":
+			trigger.Description = value
+		default:
+			fmt.Fprintf(stderr, "aw: unknown trigger add option %q\n", args[index])
+			return 2
+		}
+		index++
+	}
+	if err := workspace.AddTrigger(root, name, trigger); err != nil {
+		return printError(stderr, err)
+	}
+	fmt.Fprintf(stdout, "Added workspace trigger %s\n", name)
+	return 0
+}
+
+func parseObservedCommand(args []string) (bool, string, bool) {
+	jsonOutput := false
+	separator := -1
+	for index, arg := range args {
+		if arg == "--" {
+			separator = index
+			break
+		}
+		if arg != "--json" {
+			return false, "", false
+		}
+		jsonOutput = true
+	}
+	if separator < 0 || separator+1 >= len(args) {
+		return false, "", false
+	}
+	return jsonOutput, strings.Join(args[separator+1:], " "), true
+}
+
+func parseFireCommand(args []string) (string, string, bool) {
+	session := defaultSession()
+	separator := -1
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--":
+			separator = index
+			index = len(args)
+		case "--session":
+			if index+1 >= len(args) {
+				return "", "", false
+			}
+			session = args[index+1]
+			index++
+		default:
+			return "", "", false
+		}
+	}
+	if separator < 0 || separator+1 >= len(args) {
+		return "", "", false
+	}
+	return strings.Join(args[separator+1:], " "), session, true
+}
+
+func inboxCommand(root string, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "list" && args[0] != "drain") {
+		fmt.Fprintln(stderr, "usage: aw inbox <list|drain> [--session <key>] [--json]")
+		return 2
+	}
+	action := args[0]
+	session := defaultSession()
+	jsonOutput := false
+	for index := 1; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			jsonOutput = true
+		case "--session":
+			if index+1 >= len(args) {
+				fmt.Fprintln(stderr, "aw: --session requires a value")
+				return 2
+			}
+			session = args[index+1]
+			index++
+		default:
+			fmt.Fprintf(stderr, "aw: unknown inbox option %q\n", args[index])
+			return 2
+		}
+	}
+	if session == "" {
+		fmt.Fprintln(stderr, "aw: inbox session is required; pass --session or set AW_SESSION_ID")
+		return 2
+	}
+	var events []workspace.InboxEvent
+	var err error
+	if action == "drain" {
+		events, err = workspace.DrainInbox(root, session)
+	} else {
+		events, err = workspace.ListInbox(root, session)
+	}
+	if err != nil {
+		return printError(stderr, err)
+	}
+	if jsonOutput {
+		return writeJSON(stdout, stderr, events)
+	}
+	for _, event := range events {
+		fmt.Fprintf(stdout, "[%s] %s exit=%d command=%s\n", event.CreatedAt.Format("2006-01-02T15:04:05Z"), event.Source, event.ExitCode, event.Command)
+		if event.Stdout != "" {
+			fmt.Fprintln(stdout, event.Stdout)
+		}
+		if event.Stderr != "" {
+			fmt.Fprintln(stdout, event.Stderr)
+		}
+	}
+	return 0
+}
+
+func defaultSession() string {
+	for _, name := range []string{"AW_SESSION_ID", "HERMES_SESSION_ID"} {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func onlyJSONFlag(args []string) (bool, bool) {
 	if len(args) == 0 {
 		return false, true
@@ -268,5 +469,7 @@ Commands:
   add <name> [options] -- <command>        Add a workspace-local command
   run <name> [-- <args...>]                Run a command at the workspace root
   install <source> [--ref R] [--subdir P]   Install a local or Git package
-  version                                  Print the version`)
+  trigger <add|list|match|fire> ...          Manage and fire command triggers
+  inbox <list|drain> [options]               Read deferred trigger results
+  version                                    Print the version`)
 }
