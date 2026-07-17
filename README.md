@@ -6,7 +6,7 @@ A workspace-local command and package runtime for coding agents.
 
 ## Status
 
-`v0.1.0` is a working local-first MVP:
+`v0.2.0` is a working local-first MVP:
 
 - finds a workspace from nested directories;
 - detects Git, GitHub Actions, pnpm/npm/yarn, Python, Go, Cargo, Taskfile, just, Cloudflare, Vercel, and Netlify markers;
@@ -14,23 +14,25 @@ A workspace-local command and package runtime for coding agents.
 - stores agent-authored commands in `.agent/workspace.yaml`;
 - runs commands at the workspace root with argument forwarding and exit-code propagation;
 - stamps `snapshot: git` commands and returns exit code `4` when the workspace changed during execution;
-- installs local packages under `.agent/packages/<name>`;
+- installs local directories or a package subdirectory from a fixed Git ref under `.agent/packages/<name>`;
+- records the resolved Git commit plus a SHA-256 package digest;
 - namespaces package commands as `<package>:<command>`;
-- writes `workspace.lock` with a SHA-256 package digest and rejects modified installed packages.
+- rejects modified installed packages;
+- ships fixture-tested GitHub CI and PR-review watcher packages.
 
-Remote registries, webhooks, trigger matching, and deferred event inboxes are intentionally not in v0.1.
+Hosted registries, webhooks, trigger matching, and deferred event inboxes are intentionally not in v0.2.
 
 ## Install
 
-```bash
-go install github.com/bkmashiro/agent-workspace/cmd/aw@latest
-```
-
-For local development:
+From a local checkout:
 
 ```bash
+go install ./cmd/aw
+# or
 go build -o bin/aw ./cmd/aw
 ```
+
+No hosted release or package registry entry exists yet.
 
 ## Quick start
 
@@ -78,7 +80,7 @@ commands:
 
 `snapshot: git` hashes the starting Git state, including tracked diffs and untracked files. If the state changes before the command exits, `aw` reports the result as stale and exits `4` rather than treating an old green result as current verification.
 
-It is a validity stamp, not an isolated worktree: v0.1 does not prevent concurrent writes while the command runs.
+It is a validity stamp, not an isolated worktree: v0.2 does not prevent concurrent writes while the command runs.
 
 ## Packages
 
@@ -110,7 +112,40 @@ AW_COMMAND         resolved command name
 
 Packages are copied into `.agent/packages/`, symlinks are rejected, and every `list` or `run` verifies the installed content against `.agent/workspace.lock`.
 
-v0.1 accepts local directories only. The lockfile records the local source and content digest; immutable Git/registry sources are planned separately.
+Install from a Git repository and pin the resolved commit in the lockfile:
+
+```bash
+aw install https://github.com/owner/repository.git \\
+  --ref v0.2.0 \\
+  --subdir packages/example
+```
+
+`--ref` accepts a commit, tag, or branch fetch ref, but the lockfile always records the resolved commit SHA and content digest. Hosted package discovery and version resolution remain out of scope.
+
+## GitHub watcher package
+
+The included `github` package requires an authenticated `gh` CLI:
+
+```bash
+aw install ./examples/packages/github
+
+# Watch all workflow runs for the current HEAD.
+aw run github:ci
+
+# Wait for a review decision or new review/comment on the current PR.
+aw run github:pr-review
+```
+
+Both commands accept bounded polling options:
+
+```bash
+aw run github:ci -- --timeout 1800 --poll 10
+aw run github:pr-review -- --timeout 86400 --poll 30
+```
+
+`github:ci` waits for runs to appear, coalesces workflow state, and emits at most the last 160 lines of failed logs. It exits `0` when all runs succeed, `1` on a terminal failure, and `2` on timeout/configuration errors.
+
+`github:pr-review` returns recent bounded review/comment bodies. It exits `1` for `CHANGES_REQUESTED`, `0` for approval or other new activity, and `2` on timeout/configuration errors.
 
 ## Background use
 

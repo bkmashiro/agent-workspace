@@ -6,8 +6,50 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestInstallGitPackageFromPinnedRefAndSubdirectory(t *testing.T) {
+	root := t.TempDir()
+	repository := t.TempDir()
+	runGit(t, repository, "init")
+	runGit(t, repository, "config", "user.email", "test@example.com")
+	runGit(t, repository, "config", "user.name", "Test")
+	packageDir := filepath.Join(repository, "packages", "demo")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "name: demo\nversion: 0.2.0\ncommands:\n  ping:\n    run: printf pinned\n"
+	if err := os.WriteFile(filepath.Join(packageDir, "package.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repository, "add", ".")
+	runGit(t, repository, "commit", "-m", "package")
+	revision := gitOutput(t, repository, "rev-parse", "HEAD")
+
+	installed, err := InstallGitPackage(root, repository, revision, "packages/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed.Name != "demo" || installed.Revision != revision || installed.Source != repository {
+		t.Fatalf("installed = %#v", installed)
+	}
+	catalog, err := Catalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog["demo:ping"].Run != "printf pinned" {
+		t.Fatalf("catalog = %#v", catalog)
+	}
+}
+
+func TestInstallGitPackageRejectsEscapingSubdirectory(t *testing.T) {
+	_, err := InstallGitPackage(t.TempDir(), t.TempDir(), "HEAD", "../outside")
+	if err == nil {
+		t.Fatal("expected escaping package subdirectory to be rejected")
+	}
+}
 
 func TestInstallLocalPackageAddsNamespacedCommandsAndLock(t *testing.T) {
 	root := t.TempDir()
@@ -144,6 +186,17 @@ func TestSnapshotCommandReportsStaleWhenWorkspaceChanges(t *testing.T) {
 	if result.TestedState == "" || result.CurrentState == "" || result.TestedState == result.CurrentState {
 		t.Fatalf("invalid state stamps: %#v", result)
 	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func runGit(t *testing.T, dir string, args ...string) {

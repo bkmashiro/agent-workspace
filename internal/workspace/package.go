@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,12 +16,63 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func InstallGitPackage(root, source, ref, subdir string) (InstalledPackage, error) {
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(ref) == "" {
+		return InstalledPackage{}, errors.New("git source and ref are required")
+	}
+	cleanSubdir := filepath.Clean(subdir)
+	if cleanSubdir == "." {
+		cleanSubdir = ""
+	}
+	if filepath.IsAbs(cleanSubdir) || cleanSubdir == ".." || strings.HasPrefix(cleanSubdir, ".."+string(filepath.Separator)) {
+		return InstalledPackage{}, fmt.Errorf("package subdirectory escapes repository: %q", subdir)
+	}
+
+	temp, err := os.MkdirTemp("", "aw-package-*")
+	if err != nil {
+		return InstalledPackage{}, err
+	}
+	defer os.RemoveAll(temp)
+	commands := [][]string{
+		{"init", "-q"},
+		{"remote", "add", "origin", source},
+		{"fetch", "--depth", "1", "origin", ref},
+		{"checkout", "-q", "--detach", "FETCH_HEAD"},
+	}
+	for _, args := range commands {
+		command := exec.Command("git", args...)
+		command.Dir = temp
+		if output, err := command.CombinedOutput(); err != nil {
+			return InstalledPackage{}, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		}
+	}
+	revisionCommand := exec.Command("git", "rev-parse", "HEAD")
+	revisionCommand.Dir = temp
+	revisionOutput, err := revisionCommand.Output()
+	if err != nil {
+		return InstalledPackage{}, fmt.Errorf("resolve package revision: %w", err)
+	}
+	revision := strings.TrimSpace(string(revisionOutput))
+	packagePath := temp
+	if cleanSubdir != "" {
+		packagePath = filepath.Join(temp, cleanSubdir)
+	}
+	if _, err := os.Stat(filepath.Join(packagePath, "package.yaml")); err != nil {
+		return InstalledPackage{}, fmt.Errorf("package.yaml not found in git source subdirectory %q: %w", subdir, err)
+	}
+	return installPackage(root, packagePath, source, revision)
+}
+
 func InstallPackage(root, source string) (InstalledPackage, error) {
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return InstalledPackage{}, err
 	}
-	data, err := os.ReadFile(filepath.Join(source, "package.yaml"))
+	return installPackage(root, source, source, "")
+}
+
+func installPackage(root, packageDirectory, source, revision string) (InstalledPackage, error) {
+	data, err := os.ReadFile(filepath.Join(packageDirectory, "package.yaml"))
 	if err != nil {
 		return InstalledPackage{}, fmt.Errorf("read package.yaml: %w", err)
 	}
@@ -46,7 +98,7 @@ func InstallPackage(root, source string) (InstalledPackage, error) {
 		}
 	}
 
-	digest, err := digestDirectory(source)
+	digest, err := digestDirectory(packageDirectory)
 	if err != nil {
 		return InstalledPackage{}, err
 	}
@@ -56,7 +108,7 @@ func InstallPackage(root, source string) (InstalledPackage, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return InstalledPackage{}, err
 	}
-	if err := copyDirectory(source, destination); err != nil {
+	if err := copyDirectory(packageDirectory, destination); err != nil {
 		os.RemoveAll(destination)
 		return InstalledPackage{}, err
 	}
@@ -65,6 +117,7 @@ func InstallPackage(root, source string) (InstalledPackage, error) {
 		Name:      manifest.Name,
 		Version:   manifest.Version,
 		Source:    source,
+		Revision:  revision,
 		Digest:    digest,
 		Installed: time.Now().UTC().Truncate(time.Second),
 	}

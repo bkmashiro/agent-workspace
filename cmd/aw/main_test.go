@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,6 +87,36 @@ func TestCLIInspectJSONFromNestedDirectory(t *testing.T) {
 	}
 }
 
+func TestCLIInstallGitPackage(t *testing.T) {
+	root := newWorkspace(t)
+	repository := t.TempDir()
+	runGitCommand(t, repository, "init")
+	runGitCommand(t, repository, "config", "user.name", "Test")
+	runGitCommand(t, repository, "config", "user.email", "test@example.com")
+	packageDir := filepath.Join(repository, "packages", "demo")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "name: demo\nversion: 0.1.0\ncommands:\n  ping:\n    run: printf git-pong\n"
+	if err := os.WriteFile(filepath.Join(packageDir, "package.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, repository, "add", ".")
+	runGitCommand(t, repository, "commit", "-m", "package")
+	revision := strings.TrimSpace(runGitCommand(t, repository, "rev-parse", "HEAD"))
+
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), root, []string{
+		"install", repository, "--ref", revision, "--subdir", "packages/demo", "--json",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("install exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), revision) {
+		t.Fatalf("install output does not include revision: %s", stdout.String())
+	}
+}
+
 func TestCLIInstallLocalPackage(t *testing.T) {
 	root := newWorkspace(t)
 	source := filepath.Join(t.TempDir(), "demo")
@@ -120,6 +151,17 @@ func TestCLIRejectsMalformedAdd(t *testing.T) {
 	if code == 0 || !strings.Contains(stderr.String(), "usage") {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return string(output)
 }
 
 func newWorkspace(t *testing.T) string {

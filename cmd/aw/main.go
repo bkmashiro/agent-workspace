@@ -11,7 +11,7 @@ import (
 	"github.com/bkmashiro/agent-workspace/internal/workspace"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	cwd, err := os.Getwd()
@@ -182,19 +182,48 @@ func runCommand(ctx context.Context, root string, args []string, stdout, stderr 
 }
 
 func installCommand(root string, args []string, stdout, stderr io.Writer) int {
-	if len(args) < 1 || len(args) > 2 {
-		fmt.Fprintln(stderr, "usage: aw install <local-package-directory> [--json]")
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "usage: aw install <source> [--ref <git-ref>] [--subdir <path>] [--json]")
 		return 2
 	}
+	source := args[0]
+	ref := ""
+	subdir := ""
 	jsonOutput := false
-	if len(args) == 2 {
-		if args[1] != "--json" {
-			fmt.Fprintf(stderr, "aw: unknown install option %q\n", args[1])
+	for index := 1; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			jsonOutput = true
+		case "--ref":
+			if index+1 >= len(args) {
+				fmt.Fprintln(stderr, "aw: --ref requires a value")
+				return 2
+			}
+			ref = args[index+1]
+			index++
+		case "--subdir":
+			if index+1 >= len(args) {
+				fmt.Fprintln(stderr, "aw: --subdir requires a value")
+				return 2
+			}
+			subdir = args[index+1]
+			index++
+		default:
+			fmt.Fprintf(stderr, "aw: unknown install option %q\n", args[index])
 			return 2
 		}
-		jsonOutput = true
 	}
-	installed, err := workspace.InstallPackage(root, args[0])
+	var installed workspace.InstalledPackage
+	var err error
+	if ref != "" {
+		installed, err = workspace.InstallGitPackage(root, source, ref, subdir)
+	} else {
+		if subdir != "" {
+			fmt.Fprintln(stderr, "aw: --subdir requires --ref")
+			return 2
+		}
+		installed, err = workspace.InstallPackage(root, source)
+	}
 	if err != nil {
 		return printError(stderr, err)
 	}
@@ -238,6 +267,6 @@ Commands:
   list [--json]                            List discovered commands
   add <name> [options] -- <command>        Add a workspace-local command
   run <name> [-- <args...>]                Run a command at the workspace root
-  install <local-directory> [--json]       Install a workspace-local package
+  install <source> [--ref R] [--subdir P]   Install a local or Git package
   version                                  Print the version`)
 }

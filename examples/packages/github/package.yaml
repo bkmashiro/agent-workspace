@@ -1,0 +1,9 @@
+name: github
+version: 0.1.0
+commands:
+  ci:
+    run: "$AW_PACKAGE_DIR/scripts/watch-ci.sh"
+    description: Watch GitHub Actions for the current commit and return bounded failure evidence
+  pr-review:
+    run: "$AW_PACKAGE_DIR/scripts/watch-pr.sh"
+    description: Wait for a review or comment on the current pull request

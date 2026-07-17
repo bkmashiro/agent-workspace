@@ -1,3 +1,4 @@
 bin/
+/aw
 *.test
 .DS_Store

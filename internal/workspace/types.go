@@ -36,6 +36,7 @@ type InstalledPackage struct {
 	Name      string    `yaml:"name" json:"name"`
 	Version   string    `yaml:"version" json:"version"`
 	Source    string    `yaml:"source" json:"source"`
+	Revision  string    `yaml:"revision,omitempty" json:"revision,omitempty"`
 	Digest    string    `yaml:"digest" json:"digest"`
 	Installed time.Time `yaml:"installed" json:"installed"`
 }
